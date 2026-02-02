@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pachi Profits - Incremental Pachinko</title>
+    <style>
+        :root {
+            --bg: #1a1a24;
+            --panel-bg: #252533;
+            --accent: #ff0055;
+            --text: #e0e0e0;
+            --coin: #ffd700;
+            --gem: #b388ff;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            display: flex;
+            height: 100vh;
+            user-select: none;
+        }
+
+        /* Layout */
+        #game-container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+        }
+
+        #canvas-wrapper {
+            flex: 2;
+            position: relative;
+            background: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        canvas {
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        #ui-panel {
+            flex: 1;
+            min-width: 300px;
+            max-width: 400px;
+            background: var(--panel-bg);
+            display: flex;
+            flex-direction: column;
+            border-left: 2px solid #333;
+            z-index: 10;
+        }
+
+        /* Top Bar stats */
+        .stats-bar {
+            padding: 15px;
+            background: rgba(0,0,0,0.2);
+            border-bottom: 1px solid #444;
+        }
+        
+        .stat-row { display: flex; justify-content: space-between; margin-bottom: 5px; }
+        .currency { font-size: 1.2rem; font-weight: bold; }
+        .coin-text { color: var(--coin); }
+        .gem-text { color: var(--gem); }
+        .sub-stat { font-size: 0.9rem; color: #888; }
+
+        /* Scrollable Upgrades */
+        #upgrades-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        .upgrade-card {
+            background: rgba(255,255,255,0.05);
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s;
+            border-left: 4px solid #555;
+        }
+
+        .upgrade-card:hover { background: rgba(255,255,255,0.1); }
+        .upgrade-card.affordable { border-left-color: var(--accent); }
+        .upgrade-header { display: flex; justify-content: space-between; font-weight: bold; }
+        .upgrade-cost { color: var(--coin); font-size: 0.9rem; }
+        .upgrade-desc { font-size: 0.8rem; color: #aaa; margin-top: 4px; }
+        .upgrade-lvl { font-size: 0.75rem; color: #666; }
+
+        /* Controls */
+        .controls-area {
+            padding: 15px;
+            background: rgba(0,0,0,0.3);
+            border-top: 1px solid #444;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        button {
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: transform 0.1s;
+        }
+
+        button:active { transform: scale(0.98); }
+
+        .btn-drop {
+            background: var(--accent);
+            color: white;
+            width: 100%;
+        }
+
+        .btn-prestige {
+            background: linear-gradient(45deg, #4a148c, #7c43bd);
+            color: white;
+            font-size: 0.9rem;
+        }
+
+        .tabs { display: flex; gap: 5px; margin-bottom: 10px; }
+        .tab { 
+            flex: 1; padding: 8px; text-align: center; background: #333; 
+            font-size: 0.8rem; cursor: pointer; border-radius: 4px; 
+        }
+        .tab.active { background: #555; color: white; }
+
+        /* Overlay */
+        #float-text-layer {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+        }
+
+        /* Mobile Adjustments */
+        @media (max-width: 768px) {
+            body { flex-direction: column; }
+            #canvas-wrapper { flex: 1.5; }
+            #ui-panel { flex: 1; min-width: 100%; border-left: none; border-top: 2px solid #333; }
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="canvas-wrapper">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <div id="ui-panel">
+        <div class="stats-bar">
+            <div class="stat-row">
+                <span class="currency coin-text" id="disp-coins">0 Coins</span>
+                <span class="currency gem-text" id="disp-gems">0 Gems</span>
+            </div>
+            <div class="stat-row">
+                <span class="sub-stat" id="disp-cps">0.0 / sec</span>
+                <span class="sub-stat" id="disp-balls">Balls: 0/10</span>
+            </div>
+        </div>
+
+        <div class="controls-area" style="padding-bottom: 0; background: transparent; border: none;">
+             <div class="tabs">
+                <div class="tab active" onclick="switchTab('upgrades')">Upgrades</div>
+                <div class="tab" onclick="switchTab('settings')">Settings / Prestige</div>
+             </div>
+        </div>
+
+        <div id="upgrades-list">
+            </div>
+
+        <div id="settings-panel" style="display:none; padding: 20px;">
+            <p style="font-size: 0.9rem; color: #888;">Reset your progress to earn Gems based on lifetime earnings. Gems boost Global Multiplier.</p>
+            <div class="stat-row" style="margin: 15px 0;">
+                <span>Lifetime Coins:</span>
+                <span id="disp-lifetime" style="color:white">0</span>
+            </div>
+            <button class="btn-prestige" id="btn-prestige" onclick="Game.prestige()">Prestige (Claim 0 Gems)</button>
+            <br><br>
+            <button onclick="Game.saveData()" style="background: #333; color: white; width: 100%;">Force Save</button>
+            <button onclick="Game.hardReset()" style="background: #333; color: #f55; width: 100%; margin-top: 10px;">Hard Reset Save</button>
+        </div>
+
+        <div class="controls-area">
+            <button class="btn-drop" id="btn-drop">DROP BALL</button>
+        </div>
+    </div>
+</div>
+
+<script>
+/**
+ * ARCHITECTURE OVERVIEW
+ * 1. Constants & Config: Physics settings, Game balance.
+ * 2. State Management: Holds currency, upgrades levels.
+ * 3. Physics Engine: Grid-based collision detection.
+ * 4. Game Loop: Update logic and Render.
+ * 5. Upgrade System: Data-driven upgrade definition.
+ */
+
+// --- 1. CONFIGURATION ---
+const CONFIG = {
+    gravity: 800,           // Pixels per second squared
+    bounce: 0.6,            // Restitution
+    friction: 0.99,         // Air resistance
+    wallFriction: 0.8,      // Friction against walls
+    maxDt: 0.05,            // Physics cap to prevent tunneling
+    subSteps: 8,            // Physics iterations per frame for stability
+    gridSize: 60,           // Spatial grid cell size
+    boardWidth: 400,        // Logical coordinate system width
+    boardHeight: 600
+};
+
+// --- 2. STATE MANAGEMENT ---
+const State = {
+    coins: 0,
+    lifetimeCoins: 0,
+    gems: 0,
+    balls: [], // Active ball entities
+    particles: [],
+    floatingTexts: [],
+    
+    // Systems state
+    lastTime: 0,
+    autoDropTimer: 0,
+    saveTimer: 0,
+    
+    // Upgrades (Persistent)
+    upgrades: {
+        ballValue: 0,
+        ballCap: 0,
+        gravity: 0,
+        autoDrop: 0, // Unlock flag
+        autoRate: 0,
+        pegDensity: 0,
+        multiplier: 0,
+        centerMagnet: 0
+    },
+
+    // Getters for calculated stats
+    get ballLimit() { return 10 + this.upgrades.ballCap * 2; },
+    get baseValue() { return 1 + this.upgrades.ballValue * 1; },
+    get globalMult() { return (1 + (this.upgrades.multiplier * 0.2)) * (1 + (this.gems * 0.1)); },
+    get autoInterval() { return Math.max(0.1, 2.0 * Math.pow(0.9, this.upgrades.autoRate)); },
+    get magnetStrength() { return this.upgrades.centerMagnet * 15; }
+};
+
+// --- 3. PHYSICS & ENTITIES ---
+
+// Vector Math Helper
+const Vec2 = {
+    add: (v1, v2) => ({x: v1.x + v2.x, y: v1.y + v2.y}),
+    sub: (v1, v2) => ({x: v1.x - v2.x, y: v1.y - v2.y}),
+    mult: (v, s) => ({x: v.x * s, y: v.y * s}),
+    mag: (v) => Math.sqrt(v.x * v.x + v.y * v.y),
+    normalize: (v) => {
+        const m = Math.sqrt(v.x * v.x + v.y * v.y);
+        return m === 0 ? {x:0, y:0} : {x: v.x/m, y: v.y/m};
+    },
+    dot: (v1, v2) => v1.x * v2.x + v1.y * v2.y,
+    dist: (v1, v2) => Math.sqrt((v1.x-v2.x)**2 + (v1.y-v2.y)**2)
+};
+
+class Ball {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random() - 0.5) * 100; // Slight random init velocity
+        this.vy = 0;
+        this.r = 6;
+        this.val = State.baseValue;
+        this.color = '#fff';
+        this.active = true;
+    }
+
+    update(dt) {
+        this.vy += CONFIG.gravity * dt;
+        
+        // Simple magnet effect (pull towards center X)
+        if (State.magnetStrength > 0) {
+            const dx = (CONFIG.boardWidth / 2) - this.x;
+            this.vx += Math.sign(dx) * State.magnetStrength * dt;
+        }
+
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+
+        // Air friction
+        this.vx *= CONFIG.friction;
+        this.vy *= CONFIG.friction;
+    }
+}
+
+class Particle {
+    constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random() - 0.5) * 150;
+        this.vy = (Math.random() - 0.5) * 150;
+        this.life = 1.0;
+        this.color = color;
+    }
+    update(dt) {
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+        this.life -= dt * 1.5;
+    }
+}
+
+class FloatingText {
+    constructor(x, y, text, color) {
+        this.x = x;
+        this.y = y;
+        this.text = text;
+        this.color = color;
+        this.life = 1.0;
+        this.vy = -30;
+    }
+    update(dt) {
+        this.y += this.vy * dt;
+        this.life -= dt;
+    }
+}
+
+// Board Definition
+const Board = {
+    pegs: [],
+    walls: [],
+    pockets: [],
+
+    init() {
+        this.pegs = [];
+        this.walls = [];
+        this.pockets = [];
+        
+        const rows = 10 + State.upgrades.pegDensity * 2; // Dynamic rows
+        const cols = 9;
+        const spacingX = CONFIG.boardWidth / cols;
+        const spacingY = 40;
+        const startY = 100;
+
+        // 1. Generate Pegs
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                // Stagger rows
+                let offsetX = (r % 2 === 0) ? spacingX / 2 : 0;
+                let x = offsetX + c * spacingX + spacingX/2;
+                let y = startY + r * spacingY;
+                
+                // Add jitter
+                x += (Math.random() - 0.5) * 5;
+
+                // Keep within bounds
+                if (x > 20 && x < CONFIG.boardWidth - 20) {
+                    this.pegs.push({ x, y, r: 3 });
+                }
+            }
+        }
+
+        // 2. Generate Walls (Simple line segments)
+        // Funnel at top
+        this.walls.push({x1: 0, y1: 0, x2: CONFIG.boardWidth * 0.4, y2: 80});
+        this.walls.push({x1: CONFIG.boardWidth, y1: 0, x2: CONFIG.boardWidth * 0.6, y2: 80});
+        // Side walls
+        this.walls.push({x1: 0, y1: 0, x2: 0, y2: CONFIG.boardHeight});
+        this.walls.push({x1: CONFIG.boardWidth, y1: 0, x2: CONFIG.boardWidth, y2: CONFIG.boardHeight});
+
+        // 3. Pockets (Data only, rendering handled separately)
+        const pocketCount = 5;
+        const pWidth = CONFIG.boardWidth / pocketCount;
+        const multipliers = [0.5, 1.5, 3.0, 1.5, 0.5];
+        
+        for(let i=0; i<pocketCount; i++) {
+            this.pockets.push({
+                x: i * pWidth,
+                width: pWidth,
+                mult: multipliers[i],
+                color: i === 2 ? '#ff0055' : (i===1 || i===3 ? '#00e5ff' : '#666')
+            });
+        }
+    }
+};
+
+// Spatial Grid for Optimization
+const Grid = {
+    cells: {},
+    clear() { this.cells = {}; },
+    key(x, y) { 
+        return `${Math.floor(x/CONFIG.gridSize)},${Math.floor(y/CONFIG.gridSize)}`; 
+    },
+    add(peg) {
+        const k = this.key(peg.x, peg.y);
+        if(!this.cells[k]) this.cells[k] = [];
+        this.cells[k].push(peg);
+    },
+    getNearby(x, y) {
+        const cx = Math.floor(x/CONFIG.gridSize);
+        const cy = Math.floor(y/CONFIG.gridSize);
+        let results = [];
+        // Check 3x3 grid around cell
+        for(let i = -1; i <= 1; i++) {
+            for(let j = -1; j <= 1; j++) {
+                const k = `${cx+i},${cy+j}`;
+                if(this.cells[k]) results = results.concat(this.cells[k]);
+            }
+        }
+        return results;
+    }
+};
+
+// --- 4. ENGINE LOGIC ---
+
+const Physics = {
+    resolveCollisions(ball) {
+        // Wall Collisions (Circle vs Line Segment)
+        for (let w of Board.walls) {
+            // Simple approach: Check bounding box first? No, just few walls.
+            // Vector from line start to ball
+            const ax = ball.x - w.x1;
+            const ay = ball.y - w.y1;
+            const bx = w.x2 - w.x1;
+            const by = w.y2 - w.y1;
+            
+            const lenSq = bx*bx + by*by;
+            // Project point onto line, clamped to segment
+            let t = (ax*bx + ay*by) / lenSq;
+            t = Math.max(0, Math.min(1, t));
+            
+            const closestX = w.x1 + t * bx;
+            const closestY = w.y1 + t * by;
+            
+            const distSq = (ball.x - closestX)**2 + (ball.y - closestY)**2;
+            
+            if (distSq < ball.r * ball.r) {
+                const dist = Math.sqrt(distSq);
+                const nx = (ball.x - closestX) / dist;
+                const ny = (ball.y - closestY) / dist;
+                
+                // Push out
+                const overlap = ball.r - dist;
+                ball.x += nx * overlap;
+                ball.y += ny * overlap;
+                
+                // Reflect velocity
+                const vDotN = ball.vx * nx + ball.vy * ny;
+                ball.vx -= 2 * vDotN * nx * CONFIG.wallFriction;
+                ball.vy -= 2 * vDotN * ny * CONFIG.wallFriction;
+            }
+        }
+
+        // Peg Collisions (Grid Optimized)
+        const nearbyPegs = Grid.getNearby(ball.x, ball.y);
+        for (let peg of nearbyPegs) {
+            const dx = ball.x - peg.x;
+            const dy = ball.y - peg.y;
+            const distSq = dx*dx + dy*dy;
+            const minDist = ball.r + peg.r;
+
+            if (distSq < minDist * minDist) {
+                const dist = Math.sqrt(distSq);
+                const nx = dx / dist;
+                const ny = dy / dist;
+
+                // Push out
+                const overlap = minDist - dist;
+                ball.x += nx * overlap;
+                ball.y += ny * overlap;
+
+                // Bounce
+                const vDotN = ball.vx * nx + ball.vy * ny;
+                if (vDotN < 0) { // Only bounce if moving towards
+                    ball.vx -= (1 + CONFIG.bounce) * vDotN * nx;
+                    ball.vy -= (1 + CONFIG.bounce) * vDotN * ny;
+                    
+                    // Add some randomization to prevent loops
+                    ball.vx += (Math.random() - 0.5) * 20;
+                }
+            }
+        }
+    }
+};
+
+const Game = {
+    canvas: document.getElementById('gameCanvas'),
+    ctx: document.getElementById('gameCanvas').getContext('2d'),
+
+    init() {
+        this.resize();
+        window.addEventListener('resize', () => this.resize());
+        
+        this.loadData();
+        Board.init();
+        
+        // Populate grid once (since pegs are static unless upgraded)
+        Grid.clear();
+        Board.pegs.forEach(p => Grid.add(p));
+
+        // Event Listeners
+        document.getElementById('btn-drop').addEventListener('click', () => this.dropBall());
+        this.canvas.addEventListener('mousedown', () => this.dropBall());
+        this.canvas.addEventListener('touchstart', (e) => { e.preventDefault(); this.dropBall(); });
+
+        requestAnimationFrame((ts) => this.loop(ts));
+    },
+
+    resize() {
+        const wrapper = document.getElementById('canvas-wrapper');
+        const aspect = CONFIG.boardWidth / CONFIG.boardHeight;
+        let w = wrapper.clientWidth;
+        let h = wrapper.clientHeight;
+
+        if (w / h > aspect) { w = h * aspect; } 
+        else { h = w / aspect; }
+
+        this.canvas.style.width = w + 'px';
+        this.canvas.style.height = h + 'px';
+        this.canvas.width = CONFIG.boardWidth;
+        this.canvas.height = CONFIG.boardHeight;
+        
+        this.scaleFactor = w / CONFIG.boardWidth;
+    },
+
+    dropBall() {
+        if (State.balls.length >= State.ballLimit) return;
+        
+        // Spawn range at top
+        const spawnX = CONFIG.boardWidth/2 + (Math.random()-0.5) * 40;
+        State.balls.push(new Ball(spawnX, 20));
+    },
+
+    spawnParticles(x, y, color, amount) {
+        for(let i=0; i<amount; i++) {
+            State.particles.push(new Particle(x, y, color));
+        }
+    },
+
+    spawnText(x, y, text, color) {
+        State.floatingTexts.push(new FloatingText(x, y, text, color));
+    },
+
+    loop(timestamp) {
+        let dt = (timestamp - State.lastTime) / 1000;
+        if (isNaN(dt)) dt = 0;
+        State.lastTime = timestamp;
+        
+        // Save throttling
+        State.saveTimer += dt;
+        if(State.saveTimer > 10) {
+            this.saveData();
+            State.saveTimer = 0;
+        }
+
+        // Auto Drop Logic
+        if (State.upgrades.autoDrop > 0) {
+            State.autoDropTimer += dt;
+            if (State.autoDropTimer > State.autoInterval) {
+                this.dropBall();
+                State.autoDropTimer = 0;
+            }
+        }
+
+        // Physics Sub-stepping
+        const stepDt = dt / CONFIG.subSteps;
+        for (let s = 0; s < CONFIG.subSteps; s++) {
+            State.balls.forEach(ball => {
+                if(ball.active) {
+                    ball.update(stepDt);
+                    Physics.resolveCollisions(ball);
+
+                    // Check Pockets
+                    if (ball.y > CONFIG.boardHeight - 20) {
+                        this.handlePocket(ball);
+                    }
+                    // Out of bounds safety
+                    if (ball.y > CONFIG.boardHeight + 50 || ball.x < -50 || ball.x > CONFIG.boardWidth + 50) {
+                        ball.active = false;
+                    }
+                }
+            });
+        }
+
+        // Clean up entities
+        State.balls = State.balls.filter(b => b.active);
+        State.particles.forEach(p => p.update(dt));
+        State.particles = State.particles.filter(p => p.life > 0);
+        State.floatingTexts.forEach(t => t.update(dt));
+        State.floatingTexts = State.floatingTexts.filter(t => t.life > 0);
+
+        this.render();
+        UI.update();
+        
+        requestAnimationFrame((ts) => this.loop(ts));
+    },
+
+    handlePocket(ball) {
+        ball.active = false;
+        
+        // Find which pocket
+        let multiplier = 1.0;
+        for(let p of Board.pockets) {
+            if (ball.x >= p.x && ball.x < p.x + p.width) {
+                multiplier = p.mult;
+                break;
+            }
+        }
+
+        const totalValue = Math.floor(ball.val * multiplier * State.globalMult);
+        State.coins += totalValue;
+        State.lifetimeCoins += totalValue;
+
+        this.spawnParticles(ball.x, ball.y, '#ffd700', 5);
+        this.spawnText(ball.x, ball.y - 20, `+${totalValue}`, '#fff');
+    },
+
+    render() {
+        const ctx = this.ctx;
+        ctx.clearRect(0, 0, CONFIG.boardWidth, CONFIG.boardHeight);
+
+        // Draw Walls
+        ctx.strokeStyle = '#555';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        Board.walls.forEach(w => {
+            ctx.moveTo(w.x1, w.y1);
+            ctx.lineTo(w.x2, w.y2);
+        });
+        ctx.stroke();
+
+        // Draw Pockets
+        Board.pockets.forEach(p => {
+            ctx.fillStyle = p.color;
+            ctx.globalAlpha = 0.2;
+            ctx.fillRect(p.x, CONFIG.boardHeight - 30, p.width, 30);
+            ctx.globalAlpha = 1.0;
+            ctx.fillStyle = '#fff';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(`x${p.mult}`, p.x + p.width/2, CONFIG.boardHeight - 10);
+            
+            // Separators
+            ctx.strokeStyle = '#333';
+            ctx.beginPath();
+            ctx.moveTo(p.x, CONFIG.boardHeight - 30);
+            ctx.lineTo(p.x, CONFIG.boardHeight);
+            ctx.stroke();
+        });
+
+        // Draw Pegs
+        ctx.fillStyle = '#aaa';
+        Board.pegs.forEach(p => {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+            ctx.fill();
+        });
+
+        // Draw Balls
+        State.balls.forEach(b => {
+            ctx.fillStyle = b.color;
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+            ctx.fill();
+            // Shine
+            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.beginPath();
+            ctx.arc(b.x - 2, b.y - 2, 2, 0, Math.PI * 2);
+            ctx.fill();
+        });
+
+        // Draw Particles
+        State.particles.forEach(p => {
+            ctx.fillStyle = p.color;
+            ctx.globalAlpha = p.life;
+            ctx.fillRect(p.x, p.y, 3, 3);
+        });
+        ctx.globalAlpha = 1.0;
+
+        // Draw Text
+        State.floatingTexts.forEach(t => {
+            ctx.fillStyle = t.color;
+            ctx.globalAlpha = t.life;
+            ctx.font = "bold 16px Arial";
+            ctx.fillText(t.text, t.x, t.y);
+        });
+        ctx.globalAlpha = 1.0;
+    },
+
+    saveData() {
+        const data = {
+            coins: State.coins,
+            lifetime: State.lifetimeCoins,
+            gems: State.gems,
+            upgrades: State.upgrades,
+            time: Date.now()
+        };
+        localStorage.setItem('pachiSave', JSON.stringify(data));
+    },
+
+    loadData() {
+        const str = localStorage.getItem('pachiSave');
+        if (str) {
+            const data = JSON.parse(str);
+            State.coins = data.coins || 0;
+            State.lifetimeCoins = data.lifetime || 0;
+            State.gems = data.gems || 0;
+            State.upgrades = {...State.upgrades, ...data.upgrades}; // Merge to handle new keys
+            
+            // Offline earnings (simplified)
+            if(data.time && State.upgrades.autoDrop > 0) {
+                const diffSec = (Date.now() - data.time) / 1000;
+                if(diffSec > 60) {
+                    const avgVal = State.baseValue * State.globalMult * 1.5; // Assume 1.5 avg mult
+                    const drops = diffSec / State.autoInterval;
+                    const earnings = Math.floor(drops * avgVal * 0.2); // 20% efficiency
+                    if(earnings > 0) {
+                        State.coins += earnings;
+                        State.lifetimeCoins += earnings;
+                        alert(`Offline for ${(diffSec/60).toFixed(0)} mins.\nEarned ${earnings} coins!`);
+                    }
+                }
+            }
+        }
+        UI.buildUpgradeList();
+    },
+
+    prestige() {
+        const pendingGems = Math.floor(Math.sqrt(State.lifetimeCoins / 10000));
+        if(pendingGems <= State.gems) {
+            alert("Not enough progress to earn new Gems yet!");
+            return;
+        }
+        
+        const gain = pendingGems - State.gems; // Or just set raw total
+        if(!confirm(`Reset upgrades to gain ${gain} Gems?`)) return;
+
+        State.gems = pendingGems;
+        State.coins = 0;
+        State.balls = [];
+        // Reset upgrades
+        for(let k in State.upgrades) State.upgrades[k] = 0;
+        
+        Board.init(); // Reset board layout
+        Grid.clear(); Board.pegs.forEach(p => Grid.add(p));
+        
+        this.saveData();
+        UI.buildUpgradeList();
+        switchTab('upgrades');
+    },
+
+    hardReset() {
+        if(confirm("WIPE ALL SAVE DATA?")) {
+            localStorage.removeItem('pachiSave');
+            location.reload();
+        }
+    }
+};
+
+// --- 5. UPGRADES & UI ---
+
+const UpgradeDefs = [
+    {
+        id: 'ballValue',
+        name: 'Ball Value',
+        desc: 'Increase base value of balls.',
+        baseCost: 10,
+        costScale: 1.5,
+        max: 50
+    },
+    {
+        id: 'ballCap',
+        name: 'Ball Capacity',
+        desc: '+2 max balls on screen.',
+        baseCost: 50,
+        costScale: 2.0,
+        max: 10
+    },
+    {
+        id: 'gravity',
+        name: 'Gravity Tweak',
+        desc: 'Balls fall slightly faster.',
+        baseCost: 100,
+        costScale: 1.5,
+        max: 5,
+        onBuy: () => CONFIG.gravity += 100
+    },
+    {
+        id: 'pegDensity',
+        name: 'More Pegs',
+        desc: 'Adds more rows of pegs.',
+        baseCost: 200,
+        costScale: 2.5,
+        max: 5,
+        onBuy: () => { Board.init(); Grid.clear(); Board.pegs.forEach(p => Grid.add(p)); }
+    },
+    {
+        id: 'autoDrop',
+        name: 'Unlock Auto-Drop',
+        desc: 'Automatically drops balls.',
+        baseCost: 500,
+        costScale: 1000, // One time mostly
+        max: 1
+    },
+    {
+        id: 'autoRate',
+        name: 'Auto Speed',
+        desc: 'Increases auto-drop speed.',
+        baseCost: 800,
+        costScale: 1.8,
+        max: 15,
+        req: (s) => s.upgrades.autoDrop > 0
+    },
+    {
+        id: 'centerMagnet',
+        name: 'Center Magnet',
+        desc: 'Pulls balls toward center jackpot.',
+        baseCost: 2000,
+        costScale: 2.0,
+        max: 5
+    },
+    {
+        id: 'multiplier',
+        name: 'Coin Multiplier',
+        desc: '+20% to all earnings.',
+        baseCost: 5000,
+        costScale: 1.6,
+        max: 999
+    }
+];
+
+const UI = {
+    container: document.getElementById('upgrades-list'),
+    
+    buildUpgradeList() {
+        this.container.innerHTML = '';
+        UpgradeDefs.forEach(def => {
+            // Check requirement
+            if(def.req && !def.req(State)) return;
+
+            const lvl = State.upgrades[def.id] || 0;
+            if (lvl >= def.max) return; // Hide if maxed? Or show MAX
+
+            const cost = Math.floor(def.baseCost * Math.pow(def.costScale, lvl));
+            
+            const card = document.createElement('div');
+            card.className = 'upgrade-card';
+            card.id = `upg-${def.id}`;
+            card.innerHTML = `
+                <div class="upgrade-header">
+                    <span>${def.name}</span>
+                    <span class="upgrade-cost">${this.format(cost)}</span>
+                </div>
+                <div class="upgrade-desc">${def.desc}</div>
+                <div class="upgrade-lvl">Lvl: ${lvl} / ${def.max}</div>
+            `;
+            
+            card.onclick = () => this.buyUpgrade(def, cost);
+            this.container.appendChild(card);
+        });
+    },
+
+    buyUpgrade(def, cost) {
+        if (State.coins >= cost) {
+            State.coins -= cost;
+            State.upgrades[def.id]++;
+            if(def.onBuy) def.onBuy();
+            this.buildUpgradeList();
+            Game.saveData(); // Save on meaningful action
+        }
+    },
+
+    update() {
+        // Update Stats
+        document.getElementById('disp-coins').textContent = this.format(State.coins) + " Coins";
+        document.getElementById('disp-gems').textContent = State.gems + " Gems";
+        document.getElementById('disp-balls').textContent = `Balls: ${State.balls.length}/${State.ballLimit}`;
+        
+        // CPS estimation (visual only)
+        // A rough estimate: (balls active / fall time) * avg_value * auto_rate
+        // Simplified:
+        // const cps = State.upgrades.autoDrop ? (1/State.autoInterval * State.baseValue * State.globalMult * 1.5).toFixed(1) : 0;
+        // document.getElementById('disp-cps').textContent = `${cps} / sec (est)`;
+
+        // Highlight affordable upgrades
+        UpgradeDefs.forEach(def => {
+            const card = document.getElementById(`upg-${def.id}`);
+            if(card) {
+                const lvl = State.upgrades[def.id] || 0;
+                const cost = Math.floor(def.baseCost * Math.pow(def.costScale, lvl));
+                if(State.coins >= cost) card.classList.add('affordable');
+                else card.classList.remove('affordable');
+            }
+        });
+
+        // Prestige Preview
+        const pendingGems = Math.floor(Math.sqrt(State.lifetimeCoins / 10000));
+        const btn = document.getElementById('btn-prestige');
+        btn.textContent = `Prestige (Claim ${Math.max(0, pendingGems - State.gems)} Gems)`;
+        document.getElementById('disp-lifetime').textContent = this.format(State.lifetimeCoins);
+    },
+
+    format(num) {
+        if (num >= 1e6) return (num / 1e6).toFixed(2) + "M";
+        if (num >= 1e3) return (num / 1e3).toFixed(1) + "k";
+        return Math.floor(num);
+    }
+};
+
+window.switchTab = function(tabName) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    event.target.classList.add('active');
+    
+    if(tabName === 'upgrades') {
+        document.getElementById('upgrades-list').style.display = 'block';
+        document.getElementById('settings-panel').style.display = 'none';
+    } else {
+        document.getElementById('upgrades-list').style.display = 'none';
+        document.getElementById('settings-panel').style.display = 'block';
+    }
+}
+
+// Start Game
+Game.init();
+
+</script>
+</body>
+</html>
